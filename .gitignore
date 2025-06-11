@@ -38,3 +38,6 @@ htmlcov/
 
 # Logs
 *.log
+
+#Airflow log files
+logs/
