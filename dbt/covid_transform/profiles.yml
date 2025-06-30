@@ -1,0 +1,12 @@
+covid_transform:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: covid_postgres
+      user: admin
+      pass: admin
+      port: 5432
+      dbname: covid
+      schema: dbt_passenger
+      threads: 4

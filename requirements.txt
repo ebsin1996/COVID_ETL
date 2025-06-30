@@ -1,4 +1,5 @@
 apache-airflow[postgres]==3.0.1
 psycopg2-binary
-pandas
-wget
+pandas~=2.2.3
+wget~=3.2
+SQLAlchemy~=1.4.54

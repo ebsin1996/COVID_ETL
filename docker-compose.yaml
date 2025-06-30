@@ -55,7 +55,7 @@ x-airflow-common:
     &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
     AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
     AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
     AIRFLOW__CORE__FERNET_KEY: ''
@@ -100,9 +100,11 @@ services:
       retries: 5
       start_period: 5s
     restart: always
+    networks:
+       - covid_net
     
  
-  sample_postgres:
+  covid_postgres:
     image: postgres
     environment:
         POSTGRES_USER: admin
@@ -110,7 +112,19 @@ services:
         POSTGRES_DB: covid
     ports:
       - "5432:5432"
-    
+    networks:
+       - covid_net
+
+  loader:
+    image: python:3.12                # a plain Python image
+    working_dir: /usr/src/app
+    volumes:
+      - ./covid.py:/usr/src/app/covid.py    # mount your script
+      - ./requirements.txt:/usr/src/app/requirements.txt
+    command: [ "bash", "-c", "pip install sqlalchemy psycopg2-binary pandas wget && python covid.py" ]
+    depends_on:
+      - covid_postgres
+
   pgadmin:
     container_name: pgadmin_container
     image: dpage/pgadmin4:latest
@@ -120,6 +134,8 @@ services:
       PGADMIN_DEFAULT_PASSWORD: admin
     ports:
       - "5050:80"
+    networks:
+       - covid_net
 
   redis:
     # Redis is limited to 7.2-bookworm due to licencing change
@@ -134,6 +150,8 @@ services:
       retries: 50
       start_period: 30s
     restart: always
+    networks:
+       - covid_net
 
   airflow-apiserver:
     <<: *airflow-common
@@ -151,6 +169,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks:
+       - covid_net
 
   airflow-scheduler:
     <<: *airflow-common
@@ -166,6 +186,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks:
+       - covid_net
 
   airflow-dag-processor:
     <<: *airflow-common
@@ -181,6 +203,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks:
+       - covid_net
 
   airflow-worker:
     <<: *airflow-common
@@ -206,6 +230,8 @@ services:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
+    networks:
+       - covid_net
 
   airflow-triggerer:
     <<: *airflow-common
@@ -221,6 +247,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks:
+       - covid_net
 
   airflow-init:
     <<: *airflow-common
@@ -313,6 +341,10 @@ services:
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
       _PIP_ADDITIONAL_REQUIREMENTS: ''
     user: "0:0"
+    volumes:
+      - ${AIRFLOW_PROJ_DIR:-.}:/sources
+    networks:
+      - covid_net
 
   airflow-cli:
     <<: *airflow-common
@@ -328,6 +360,8 @@ services:
       - airflow
     depends_on:
       <<: *airflow-common-depends-on
+    networks:
+      - covid_net
 
   # You can enable flower by adding "--profile flower" option e.g. docker-compose --profile flower up
   # or by explicitly targeted on the command line e.g. docker-compose up flower.
@@ -350,6 +384,28 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks:
+       - covid_net
+
+  dbt:
+      image: ghcr.io/dbt-labs/dbt-postgres:1.9.latest
+      depends_on:
+        - covid_postgres
+      volumes:
+        - ./dbt/covid_transform:/usr/app/dbt
+
+      working_dir: /usr/app/dbt
+
+      environment:
+            DBT_PROFILES_DIR: /usr/app/dbt
+
+      entrypoint: [ "dbt" ]
+      command: ["debug"]
+      networks:
+       - covid_net
 
 volumes:
   postgres-db-volume:
+networks:
+  covid_net:
+    driver: bridge

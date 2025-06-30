@@ -1,0 +1,79 @@
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from datetime import datetime
+
+default_args = {
+    'owner': 'you',
+    'start_date': datetime(2025, 6, 1),
+    'retries': 1,
+    'retry_delay': 300,  # 5 minutes
+    'email_on_failure': True,
+}
+
+with DAG('github_etl_pipeline',
+         default_args=default_args,
+         schedule_interval='@daily',
+         catchup=False) as dag:
+
+    def extract_from_github(**context):
+        # 1. Clone/pull the repo to /opt/airflow/extracted_data
+        # 2. For each new file, compute checksum and compare to loaded_files table.
+        # 3. Put any new file paths into XCom for downstream tasks.
+        pass
+
+    def transform_and_detect_schema(**context):
+        # 1. Get file paths from XCom
+        # 2. For each file, detect schema (v1 or v2)
+        # 3. Normalize columns to the unified schema
+        # 4. Save the transformed CSV to /opt/airflow/staging/DATE/file.csv
+        # 5. Pass staging paths via XCom
+        pass
+
+    def validate(**context):
+        # 1. Load staging files into Pandas DataFrames
+        # 2. Run schema, null-check, uniqueness, non-negativity checks
+        # 3. If any check fails, raise Exception → DAG fails.
+        pass
+
+    def load_to_db(**context):
+        # 1. Read validated staging files
+        # 2. Upsert (INSERT ON CONFLICT) into final_table
+        # 3. Record row counts, etc., into a validation_log table
+        pass
+
+    def mark_loaded(**context):
+        # 1. Insert file_name and checksum into loaded_files table
+        pass
+
+    t1 = PythonOperator(
+        task_id='extract_from_github',
+        python_callable=extract_from_github,
+        provide_context=True
+    )
+
+    t2 = PythonOperator(
+        task_id='transform_and_detect_schema',
+        python_callable=transform_and_detect_schema,
+        provide_context=True
+    )
+
+    t3 = PythonOperator(
+        task_id='validate',
+        python_callable=validate,
+        provide_context=True
+    )
+
+    t4 = PythonOperator(
+        task_id='load_to_db',
+        python_callable=load_to_db,
+        provide_context=True
+    )
+
+    t5 = PythonOperator(
+        task_id='mark_loaded',
+        python_callable=mark_loaded,
+        provide_context=True
+    )
+
+    # Define the order:
+    t1 >> t2 >> t3 >> t4 >> t5

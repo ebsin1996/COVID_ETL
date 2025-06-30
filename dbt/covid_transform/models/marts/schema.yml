@@ -1,0 +1,9 @@
+version: 2
+
+models:
+  - name: fct_covid
+    columns:
+      - name: record_hash
+        tests:
+          - unique
+          - not_null

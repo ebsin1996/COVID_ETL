@@ -1,0 +1,21 @@
+version: 2
+
+sources:
+  - name: covid_source
+    tables:
+      - name: raw_covid_data
+
+models:
+  - name: stg_covid
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: record_hash
+        tests: [unique, not_null]
+      - name: confirmed
+        tests: [not_null]
+      - name: deaths
+        tests: [not_null]
+
+  - name: fct_covid
+    description: "Facts table of covid data"
