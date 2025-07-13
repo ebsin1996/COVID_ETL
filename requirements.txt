@@ -1,5 +1,8 @@
-apache-airflow[postgres]==3.0.1
+apache-airflow==3.0.1
+apache-airflow-providers-docker
+requests
 psycopg2-binary
-pandas~=2.2.3
-wget~=3.2
-SQLAlchemy~=1.4.54
+pandas
+sqlalchemy
+dbt-core==1.9.0
+dbt-postgres==1.9.0

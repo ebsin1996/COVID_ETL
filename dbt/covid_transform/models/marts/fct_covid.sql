@@ -1,4 +1,4 @@
-{{ config(materialized='table') }}
+{{ config(materialized='incremental', unique_key='record_hash') }}
 
 select
   md5(province_state||'|'||country_region||'|'||last_update) as record_hash,

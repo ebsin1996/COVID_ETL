@@ -8,5 +8,6 @@ covid_transform:
       pass: admin
       port: 5432
       dbname: covid
-      schema: dbt_passenger
+      schema: public
       threads: 4
+      retries: 1

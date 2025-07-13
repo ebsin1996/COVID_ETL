@@ -1,7 +1,7 @@
 version: 2
 
 sources:
-  - name: covid_source
+  - name: jhu
     database: covid
     schema: public              # schema where raw_covid_data lives
     tables:

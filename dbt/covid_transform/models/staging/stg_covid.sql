@@ -1,9 +1,8 @@
-{{ config(materialized='table') }}
+{{ config(materialized='view') }}
 
 with source_data as (
-
   select *
-  from {{ source('covid_source','raw_covid_data') }}
+  from {{ source('jhu','raw_covid_data') }}
 
 ),
 
