@@ -6,6 +6,8 @@ import pandas as pd
 from sqlalchemy import create_engine
 from airflow.models import DAG
 from airflow.operators.python import PythonOperator
+import tempfile
+import logging
 
 
 #create superset -- list all available columns and add File_Date for identifying files
@@ -28,7 +30,7 @@ New_Name={
 required_columns=["Province_State", "Country_Region", "Last_Update", "Confirmed","Deaths", "Recovered","Active","File_Date"]
 
 start_date=datetime(2021,1,1)
-end_date=datetime(2021,1,4)
+end_date=datetime(2021,2,28)  # Extended to full month for meaningful data
 days=(end_date - start_date).days + 1  # use the .days to get the diff of the number of days the iteration will run through
 
 def reshape_schema(df_input):
@@ -47,51 +49,120 @@ def validate(df_input, fname):
 
 engine=create_engine("postgresql://admin:admin@covid_postgres:5432/covid")
 
-all_df=[]
-
-def extract_covid_data():
+def extract_covid_data(**context):
+    logger = logging.getLogger(__name__)
+    all_df = []
+    failed_dates = []
+    
     for day in range(days):
         single_date=start_date + timedelta(day) # timedelta adds number in terms of days . changing the date into number
         date_str=single_date.strftime("%m-%d-%Y")
         url_f=f"https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_daily_reports/{date_str}.csv"
+        
         try:
-            local_path = f"/opt/airflow/dags/{date_str}.csv"
+            # Use temporary directory instead of hardcoded path
+            with tempfile.NamedTemporaryFile(mode='w+b', suffix='.csv', delete=False) as temp_file:
+                local_path = temp_file.name
+                
             response = requests.get(url_f, timeout=30)
             response.raise_for_status()
+            
             with open(local_path, 'wb') as f:
                 f.write(response.content)
-            # csv_files = wget.download(url_f)
+                
             df = pd.read_csv(local_path)
-            os.remove(local_path)  # remove csv file after reading and appending to list
+            os.remove(local_path)  # remove csv file after reading
+            
             df = reshape_schema(df)
             df["File_Date"] = single_date.date()
-            validate(df,f"{date_str}.csv")
+            validate(df, f"{date_str}.csv")
             all_df.append(df)
+            logger.info(f"Successfully processed data for {date_str}: {len(df)} rows")
 
         except Exception as e:
+            failed_dates.append(date_str)
+            logger.error(f"Failed to process data for {date_str}: {str(e)}")
+            # Clean up temp file if it exists
+            if 'local_path' in locals() and os.path.exists(local_path):
+                os.remove(local_path)
             continue
+    
+    logger.info(f"Extraction completed: {len(all_df)} successful, {len(failed_dates)} failed")
+    if failed_dates:
+        logger.warning(f"Failed dates: {failed_dates}")
+    
+    # Convert dataframes to JSON for XCom serialization
+    serialized_data = []
+    for df in all_df:
+        serialized_data.append(df.to_json(orient='records', date_format='iso'))
+    
+    # Push data to XCom for the next task
+    context['task_instance'].xcom_push(key='covid_data', value=serialized_data)
+    context['task_instance'].xcom_push(key='total_records', value=sum(len(df) for df in all_df))
+    
+    return f"Extracted {len(all_df)} datasets with {sum(len(df) for df in all_df)} total records"
 
-def load_to_postgres():
-    print(f"[load_to_postgres] {len(all_df)} dataframes to write")
+def load_to_postgres(**context):
+    logger = logging.getLogger(__name__)
+    
+    # Pull data from XCom
+    serialized_data = context['task_instance'].xcom_pull(key='covid_data', task_ids='extract_covid_data')
+    total_records = context['task_instance'].xcom_pull(key='total_records', task_ids='extract_covid_data')
+    
+    if not serialized_data:
+        logger.warning("No data received from extraction task")
+        return "No data to load"
+    
+    logger.info(f"[load_to_postgres] Received {len(serialized_data)} datasets with {total_records} total records")
+    
+    # Reconstruct dataframes from JSON
+    all_df = []
+    for json_data in serialized_data:
+        df = pd.read_json(json_data, orient='records')
+        # Convert File_Date back to date objects
+        df['File_Date'] = pd.to_datetime(df['File_Date']).dt.date
+        all_df.append(df)
+    
     if len(all_df) > 0:
-        final_df=pd.concat(all_df, ignore_index=True)
-        final_df=final_df.drop_duplicates(keep="first")
-        print(final_df.head())
-        final_df.to_csv("covid_data.csv", index=False)
-        with engine.begin() as conn:
-            final_df.to_sql("raw_covid_data",
-                            con=conn,
-                            if_exists="append" ,
-                            index=False,
-                            method="multi")
-        print("covid data has has been written to Postgres")
+        final_df = pd.concat(all_df, ignore_index=True)
+        final_df = final_df.drop_duplicates(keep="first")
+        
+        logger.info(f"Final dataset shape: {final_df.shape}")
+        logger.info(f"Sample data:\n{final_df.head()}")
+        
+        # Save to CSV for debugging
+        csv_path = "/tmp/covid_data.csv"
+        final_df.to_csv(csv_path, index=False)
+        logger.info(f"Data saved to {csv_path} for debugging")
+        
+        try:
+            with engine.begin() as conn:
+                rows_inserted = final_df.to_sql("raw_covid_data",
+                                con=conn,
+                                if_exists="append",
+                                index=False,
+                                method="multi",
+                                chunksize=5000)
+                logger.info(f"Successfully inserted {len(final_df)} rows into raw_covid_data table")
+                
+        except Exception as e:
+            logger.error(f"Failed to insert data into postgres: {str(e)}")
+            raise
+            
+        return f"Successfully loaded {len(final_df)} records to postgres"
+    else:
+        logger.warning("No valid dataframes to load")
+        return "No valid data to load"
 
 
 dag = DAG(
         dag_id="covid_data",
-        start_date=datetime(2025, 6, 27),
+        start_date=datetime(2025, 8, 15),
         schedule="@daily",
-        catchup=False
+        catchup=False,
+        default_args={
+        "execution_timeout": timedelta(seconds=300)
+        }
 )
 
 with  dag:
